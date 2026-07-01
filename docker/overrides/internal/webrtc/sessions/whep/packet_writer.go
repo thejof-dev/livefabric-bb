@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/glimesh/broadcast-box/internal/settings"
 	"github.com/glimesh/broadcast-box/internal/webrtc/codecs"
 )
 
@@ -72,8 +73,8 @@ func (w *WHEPSession) SendVideoPacket(packet codecs.TrackPacket) {
 	packet.Packet.SequenceNumber = videoSequenceNumber
 	packet.Packet.Timestamp = videoTimestamp
 
-	// No pacer configured: forward immediately (lossless passthrough).
-	if pacer == nil {
+	// Pacer inactive (default): forward immediately (lossless passthrough).
+	if pacer == nil || !settings.PacerActive() {
 		w.writeVideoRTP(packet)
 		return
 	}

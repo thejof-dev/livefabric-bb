@@ -30,6 +30,13 @@ COPY docker/overrides/internal/webrtc/sessions/whep/types.go /build/src/internal
 COPY docker/overrides/internal/webrtc/sessions/whep/whep.go /build/src/internal/webrtc/sessions/whep/whep.go
 COPY docker/overrides/internal/webrtc/sessions/whep/packet_writer.go /build/src/internal/webrtc/sessions/whep/packet_writer.go
 COPY docker/overrides/internal/webrtc/sessions/whep/pacer.go /build/src/internal/webrtc/sessions/whep/pacer.go
+COPY docker/overrides/internal/settings/settings.go /build/src/internal/settings/settings.go
+COPY docker/overrides/internal/server/handlers/settings_handler.go /build/src/internal/server/handlers/settings_handler.go
+
+# Register the /settings and /api/settings routes by patching the router. The
+# grep guard fails the build loudly if the upstream anchor ever moves.
+RUN perl -0pi -e 's{(serverMux\.HandleFunc\("/api/status",[^\n]*\n)}{$1\tserverMux.HandleFunc("/settings", corsHandler(settingsPageHandler))\n\tserverMux.HandleFunc("/api/settings", corsHandler(settingsAPIHandler))\n}' internal/server/handlers/routes.go \
+ && grep -q '/api/settings' internal/server/handlers/routes.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
@@ -38,12 +45,15 @@ FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    iproute2 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/livefabric-bb
 
 COPY --from=builder /out/broadcast-box /opt/livefabric-bb/broadcast-box
 COPY --from=builder /build/src/web/build /opt/livefabric-bb/web/build
+COPY docker/entrypoint.sh /opt/livefabric-bb/entrypoint.sh
+RUN chmod +x /opt/livefabric-bb/entrypoint.sh
 
 RUN mkdir -p /opt/livefabric-bb/profiles /opt/livefabric-bb/logs
 
@@ -58,9 +68,11 @@ ENV LOGGING_ENABLED=TRUE
 ENV LOGGING_DIRECTORY=/opt/livefabric-bb/logs
 # Frame-aware WHEP egress pacer is opt-in. Set BB_WHEP_MAX_BPS (bits/sec) at
 # runtime to smooth bursty encoder output, e.g. -e BB_WHEP_MAX_BPS=1500000.
-# Unset (default) => lossless immediate passthrough.
+# Unset (default) => lossless immediate passthrough. The pacer, PLI throttle
+# (BB_PLI_THROTTLE_MS) and NAT override can also be changed live at /settings
+# and are persisted to STREAM_PROFILE_PATH/livefabric-settings.json.
 
 EXPOSE 8080/tcp
 EXPOSE 8080/udp
 
-ENTRYPOINT ["/opt/livefabric-bb/broadcast-box"]
+ENTRYPOINT ["/opt/livefabric-bb/entrypoint.sh"]

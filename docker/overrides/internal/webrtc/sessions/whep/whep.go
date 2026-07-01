@@ -2,11 +2,10 @@ package whep
 
 import (
 	"log/slog"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/glimesh/broadcast-box/internal/chat"
+	"github.com/glimesh/broadcast-box/internal/settings"
 	"github.com/glimesh/broadcast-box/internal/webrtc/codecs"
 	"github.com/pion/webrtc/v4"
 )
@@ -23,6 +22,9 @@ func CreateNewWHEP(
 ) (w *WHEPSession) {
 	slog.Debug("WHEPSession.CreateNewWHEP", "whepSessionID", whepSessionID)
 
+	// Ensure runtime settings are loaded before the first packet flows.
+	settings.Init()
+
 	w = &WHEPSession{
 		SessionID:               whepSessionID,
 		StreamKey:               streamKey,
@@ -36,16 +38,12 @@ func CreateNewWHEP(
 		ChatManager:             chatManager,
 	}
 
-	// Optional frame-aware egress pacer for WHEP session video traffic.
-	// Set BB_WHEP_MAX_BPS (bits/sec) to smooth bursty encoder output to a steady
-	// rate. Unset or 0 => disabled (lossless immediate passthrough).
-	if v := os.Getenv("BB_WHEP_MAX_BPS"); v != "" {
-		if bps, err := strconv.ParseUint(v, 10, 64); err == nil && bps > 0 {
-			w.pacer = newVideoPacer(bps, w.writeVideoRTP, w.onPacerOverflow)
-			w.pacer.start()
-			slog.Info("WHEPSession.VideoPacer.Enabled", "streamKey", streamKey, "bps", bps)
-		}
-	}
+	// Frame-aware egress pacer. It is always present but only shapes traffic
+	// while the pacer is active in settings (BB_WHEP_MAX_BPS / settings page);
+	// otherwise SendVideoPacket forwards immediately. The rate is read live so
+	// runtime changes apply without recreating the session.
+	w.pacer = newVideoPacer(settings.PacerBps, w.writeVideoRTP, w.onPacerOverflow)
+	w.pacer.start()
 
 	w.AudioLayerCurrent.Store("")
 	w.VideoLayerCurrent.Store("")
@@ -152,7 +150,7 @@ func (w *WHEPSession) SendPLI() {
 		return
 	}
 
-	const minPLIInterval = 750 * time.Millisecond
+	minPLIInterval := settings.PLIThrottle()
 	now := time.Now()
 
 	w.PLILock.Lock()

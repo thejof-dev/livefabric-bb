@@ -162,10 +162,30 @@ docker run -d --name livefabric-bb --restart unless-stopped \
 
 Notes:
 
-- `NAT_1_TO_1_IP` must be the IP viewers can actually reach.
+- `NAT_1_TO_1_IP` is **optional** on this image. If you leave it unset, the
+  container auto-detects the host's primary LAN IPv4 at startup (the source IP
+  for outbound traffic) and advertises that as the ICE host candidate. This is
+  what makes the appliance "just work" without knowing the NIC name — set it
+  explicitly only for multi-homed hosts or when viewers reach a different IP.
 - `INTERFACE_FILTER` should match the LAN NIC on that encoder host.
 - The Docker image includes the same mitigation we applied live:
   reduced RTCP feedback and throttled PLI forwarding.
+
+### Live settings page
+
+The image serves a dependency-free admin page at `http://{device_ip}:8080/settings`
+(no auth). It lets you change, without redeploying:
+
+- **Egress pacer** — enable/disable and target rate (Mbps)
+- **PLI throttle** — minimum interval (ms) between keyframe requests
+- **NAT / advertised IP override** — applies after a container restart
+
+Changes are applied live (pacer + PLI take effect immediately) and persisted to
+`STREAM_PROFILE_PATH/livefabric-settings.json` in the profiles volume, so they
+survive restarts. The JSON API is at `GET`/`POST /api/settings`. Env vars
+(`BB_WHEP_MAX_BPS`, `BB_PLI_THROTTLE_MS`, `NAT_1_TO_1_IP`) seed the initial
+values on first boot; the settings file wins thereafter. Set
+`BB_SETTINGS_PATH` to relocate the settings file.
 
 ### Burst control on BB server
 
@@ -181,6 +201,7 @@ keyframe (via a throttled PLI), so a decoder is never fed a partial frame.
 - Env var: `BB_WHEP_MAX_BPS`
 - Meaning: target pacing rate (bits/sec) for per-session WHEP video egress
 - Default: **unset = disabled** (lossless immediate passthrough). Opt-in only.
+- Also adjustable live at `/settings` (see above) without a redeploy.
 
 This complements — it does not replace — encoder-side rate control. The most
 effective burst fix remains capping the encoder itself (CBR/constant-strict +

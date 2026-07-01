@@ -26,6 +26,9 @@ type pacedPacket struct {
 // the queue overflows; the pacer then drops the whole pending queue and asks
 // the session to resync on the next keyframe, rather than slicing individual
 // packets out of a frame (which would corrupt the H.264 reference chain).
+//
+// The target rate is read live from rateFn on every release, so runtime changes
+// via the settings page take effect immediately without recreating the pacer.
 type videoPacer struct {
 	mu   sync.Mutex
 	cond *sync.Cond
@@ -33,41 +36,21 @@ type videoPacer struct {
 	queue      []pacedPacket
 	queueBytes int
 
-	rateBytesPerSec float64
-	bucketBytes     float64
-	tokens          float64
-	lastRefill      time.Time
-	maxQueueBytes   int
+	tokens     float64
+	lastRefill time.Time
 
 	closed bool
 
+	rateFn     func() uint64 // current target bits/sec (0 => unlimited)
 	write      func(codecs.TrackPacket)
 	onOverflow func(dropped uint64)
 }
 
-func newVideoPacer(bitsPerSec uint64, write func(codecs.TrackPacket), onOverflow func(uint64)) *videoPacer {
-	rate := float64(bitsPerSec) / 8.0
-
-	// Allow a short instantaneous burst (~250ms of rate, at least one keyframe)
-	// so keyframes are not needlessly delayed.
-	burst := rate * 0.25
-	if burst < 64*1024 {
-		burst = 64 * 1024
-	}
-
-	// Absorb up to ~1s of bursty output before declaring sustained overload.
-	maxQueue := int(rate)
-	if maxQueue < 256*1024 {
-		maxQueue = 256 * 1024
-	}
-
+func newVideoPacer(rateFn func() uint64, write func(codecs.TrackPacket), onOverflow func(uint64)) *videoPacer {
 	p := &videoPacer{
-		rateBytesPerSec: rate,
-		bucketBytes:     burst,
-		tokens:          burst,
-		maxQueueBytes:   maxQueue,
-		write:           write,
-		onOverflow:      onOverflow,
+		rateFn:     rateFn,
+		write:      write,
+		onOverflow: onOverflow,
 	}
 	p.cond = sync.NewCond(&p.mu)
 	return p
@@ -75,6 +58,34 @@ func newVideoPacer(bitsPerSec uint64, write func(codecs.TrackPacket), onOverflow
 
 func (p *videoPacer) start() {
 	go p.run()
+}
+
+// rateBytesPerSec returns the current target rate in bytes/sec (0 = unlimited).
+func (p *videoPacer) rateBytesPerSec() float64 {
+	if p.rateFn == nil {
+		return 0
+	}
+	return float64(p.rateFn()) / 8.0
+}
+
+// burstBytes is the token-bucket capacity: allow a short instantaneous burst
+// (~250ms of rate, at least one keyframe) so keyframes are not needlessly held.
+func burstBytes(rate float64) float64 {
+	b := rate * 0.25
+	if b < 64*1024 {
+		b = 64 * 1024
+	}
+	return b
+}
+
+// maxQueueBytes is how much bursty output is buffered before declaring
+// sustained overload (~1s of rate, floor 256KB).
+func maxQueueBytes(rate float64) int {
+	m := int(rate)
+	if m < 256*1024 {
+		m = 256 * 1024
+	}
+	return m
 }
 
 // enqueue admits a finalized packet into the pacing queue. On sustained
@@ -87,7 +98,8 @@ func (p *videoPacer) enqueue(pk pacedPacket) {
 		return
 	}
 
-	if p.queueBytes+pk.size > p.maxQueueBytes {
+	limit := maxQueueBytes(p.rateBytesPerSec())
+	if p.queueBytes+pk.size > limit {
 		dropped := uint64(len(p.queue)) + 1
 		p.queue = nil
 		p.queueBytes = 0
@@ -114,7 +126,7 @@ func (p *videoPacer) close() {
 	p.mu.Unlock()
 }
 
-func (p *videoPacer) refillLocked(now time.Time) {
+func (p *videoPacer) refillLocked(now time.Time, rate float64) {
 	if p.lastRefill.IsZero() {
 		p.lastRefill = now
 		return
@@ -125,9 +137,9 @@ func (p *videoPacer) refillLocked(now time.Time) {
 		return
 	}
 
-	p.tokens += elapsed * p.rateBytesPerSec
-	if p.tokens > p.bucketBytes {
-		p.tokens = p.bucketBytes
+	p.tokens += elapsed * rate
+	if maxTokens := burstBytes(rate); p.tokens > maxTokens {
+		p.tokens = maxTokens
 	}
 	p.lastRefill = now
 }
@@ -143,13 +155,30 @@ func (p *videoPacer) run() {
 			return
 		}
 
-		p.refillLocked(time.Now())
+		rate := p.rateBytesPerSec()
 		head := p.queue[0]
+
+		// Unlimited (pacer effectively disabled): release immediately.
+		if rate <= 0 {
+			p.queue = p.queue[1:]
+			if len(p.queue) == 0 {
+				p.queue = nil
+			}
+			p.queueBytes -= head.size
+			write := p.write
+			p.mu.Unlock()
+			if write != nil {
+				write(head.packet)
+			}
+			continue
+		}
+
+		p.refillLocked(time.Now(), rate)
 
 		// Not enough budget yet: sleep for the deficit, then re-evaluate.
 		if p.tokens < float64(head.size) {
 			deficit := float64(head.size) - p.tokens
-			wait := time.Duration(deficit / p.rateBytesPerSec * float64(time.Second))
+			wait := time.Duration(deficit / rate * float64(time.Second))
 			if wait < time.Millisecond {
 				wait = time.Millisecond
 			}
