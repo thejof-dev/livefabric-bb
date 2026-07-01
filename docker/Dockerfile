@@ -2,10 +2,13 @@
 
 FROM node:22-bookworm-slim AS node
 
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 ARG BROADCAST_BOX_REF=main
 WORKDIR /build
+
+ARG TARGETOS
+ARG TARGETARCH
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -32,7 +35,7 @@ RUN perl -0777 -i -pe 's/(SessionClose sync\.Once\n\s*onClose\s+func\(string\)\n
 RUN perl -0777 -i -pe 's/func \(w \*WHEPSession\) SendPLI\(\) \{\n\s*if w\.IsSessionClosed\.Load\(\) \{\n\s*return\n\s*\}\n\n\s*w\.pliSender\(\)\n\}/func (w *WHEPSession) SendPLI() {\n\tif w.IsSessionClosed.Load() {\n\t\treturn\n\t}\n\n\tconst minPLIInterval = 750 * time.Millisecond\n\tnow := time.Now()\n\n\tw.PLILock.Lock()\n\tif !w.lastPLISent.IsZero() && now.Sub(w.lastPLISent) < minPLIInterval {\n\t\tw.PLILock.Unlock()\n\t\treturn\n\t}\n\tw.lastPLISent = now\n\tw.PLILock.Unlock()\n\n\tw.pliSender()\n\}/s' internal/webrtc/sessions/whep/whep.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/broadcast-box .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
 
 FROM debian:bookworm-slim AS runtime
 
