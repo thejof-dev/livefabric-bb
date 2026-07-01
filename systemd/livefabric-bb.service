@@ -1,0 +1,19 @@
+[Unit]
+Description=LiveFabric Broadcast Box (WHIP/WHEP WebRTC server)
+Documentation=https://github.com/glimesh/broadcast-box
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=james
+Group=james
+WorkingDirectory=/opt/livefabric-bb
+EnvironmentFile=/opt/livefabric-bb/broadcast-box.env
+ExecStart=/opt/livefabric-bb/broadcast-box
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
