@@ -32,18 +32,19 @@ type (
 		VideoTrack              *codecs.TrackMultiCodec
 		VideoTimestamp          uint32
 		VideoBitrate            atomic.Uint64
-		VideoRateLimitBps       atomic.Uint64
 		VideoBytesWritten       int
 		videoBitrateWindowStart time.Time
 		videoBitrateWindowBytes int
-		videoRateWindowStart    time.Time
-		videoRateWindowBytes    int
 		VideoPacketsWritten     uint64
 		VideoPacketsDropped     atomic.Uint64
 		VideoSequenceNumber     uint16
 		VideoLayerCurrent       atomic.Value
 		videoLayerPriority      int
 		videoLayerExplicit      bool
+
+		// Optional frame-aware egress pacer (nil when BB_WHEP_MAX_BPS is unset).
+		// Set once at session creation and immutable thereafter.
+		pacer *videoPacer
 
 		// Protects AudioTrack, AudioTimestamp, AudioPacketsWritten, AudioSequenceNumber
 		AudioLock           sync.RWMutex

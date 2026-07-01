@@ -29,6 +29,7 @@ COPY docker/overrides/internal/webrtc/codecs/codecs.go /build/src/internal/webrt
 COPY docker/overrides/internal/webrtc/sessions/whep/types.go /build/src/internal/webrtc/sessions/whep/types.go
 COPY docker/overrides/internal/webrtc/sessions/whep/whep.go /build/src/internal/webrtc/sessions/whep/whep.go
 COPY docker/overrides/internal/webrtc/sessions/whep/packet_writer.go /build/src/internal/webrtc/sessions/whep/packet_writer.go
+COPY docker/overrides/internal/webrtc/sessions/whep/pacer.go /build/src/internal/webrtc/sessions/whep/pacer.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
@@ -55,7 +56,9 @@ ENV STUN_SERVERS=stun.l.google.com:19302
 ENV STREAM_PROFILE_PATH=/opt/livefabric-bb/profiles
 ENV LOGGING_ENABLED=TRUE
 ENV LOGGING_DIRECTORY=/opt/livefabric-bb/logs
-ENV BB_WHEP_MAX_BPS=1500000
+# Frame-aware WHEP egress pacer is opt-in. Set BB_WHEP_MAX_BPS (bits/sec) at
+# runtime to smooth bursty encoder output, e.g. -e BB_WHEP_MAX_BPS=1500000.
+# Unset (default) => lossless immediate passthrough.
 
 EXPOSE 8080/tcp
 EXPOSE 8080/udp

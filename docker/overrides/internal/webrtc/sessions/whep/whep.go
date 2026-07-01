@@ -1,9 +1,9 @@
 package whep
 
 import (
+	"log/slog"
 	"os"
 	"strconv"
-	"log/slog"
 	"time"
 
 	"github.com/glimesh/broadcast-box/internal/chat"
@@ -36,12 +36,14 @@ func CreateNewWHEP(
 		ChatManager:             chatManager,
 	}
 
-	// Optional hard egress cap for WHEP session video traffic (bits/sec).
-	// Set BB_WHEP_MAX_BPS to a positive integer to enable limiting.
+	// Optional frame-aware egress pacer for WHEP session video traffic.
+	// Set BB_WHEP_MAX_BPS (bits/sec) to smooth bursty encoder output to a steady
+	// rate. Unset or 0 => disabled (lossless immediate passthrough).
 	if v := os.Getenv("BB_WHEP_MAX_BPS"); v != "" {
 		if bps, err := strconv.ParseUint(v, 10, 64); err == nil && bps > 0 {
-			w.VideoRateLimitBps.Store(bps)
-			slog.Info("WHEPSession.VideoRateLimit.Enabled", "streamKey", streamKey, "bps", bps)
+			w.pacer = newVideoPacer(bps, w.writeVideoRTP, w.onPacerOverflow)
+			w.pacer.start()
+			slog.Info("WHEPSession.VideoPacer.Enabled", "streamKey", streamKey, "bps", bps)
 		}
 	}
 
@@ -58,6 +60,11 @@ func (w *WHEPSession) Close() {
 	w.SessionClose.Do(func() {
 		slog.Debug("WHEPSession.Close")
 		w.IsSessionClosed.Store(true)
+
+		// Stop the egress pacer goroutine (if enabled)
+		if w.pacer != nil {
+			w.pacer.close()
+		}
 
 		// Close PeerConnection
 		slog.Debug("WHEPSession.Close.PeerConnection.GracefulClose")

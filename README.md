@@ -169,27 +169,41 @@ Notes:
 
 ### Burst control on BB server
 
-To reduce traffic spikes caused by unstable WHEP clients, this image includes a
-server-side egress limiter in the WHEP packet path.
+To reduce traffic spikes caused by bursty encoder output (large keyframes, VBR
+overshoot), this image includes a **frame-aware egress pacer** in the WHEP
+packet path. It is a leaky-bucket pacer with a bounded per-session queue: it
+*smooths* bursts by delaying packets to a steady target rate rather than
+dropping them, so it is lossless for transient spikes and only adds a small,
+bounded latency. It never slices individual packets out of a frame — under
+sustained overload it flushes the pending queue and cleanly resyncs on the next
+keyframe (via a throttled PLI), so a decoder is never fed a partial frame.
 
 - Env var: `BB_WHEP_MAX_BPS`
-- Meaning: hard cap (bits/sec) for per-session WHEP video egress
-- Default in image: `1500000` (1.5 Mbps)
+- Meaning: target pacing rate (bits/sec) for per-session WHEP video egress
+- Default: **unset = disabled** (lossless immediate passthrough). Opt-in only.
 
-Example override:
+This complements — it does not replace — encoder-side rate control. The most
+effective burst fix remains capping the encoder itself (CBR/constant-strict +
+longer GOP); the pacer smooths whatever the encoder still bursts.
+
+Example (enable pacing at 1.5 Mbps):
 
 ```bash
 docker run -d --name livefabric-bb --restart unless-stopped \
   --network host \
   -e NAT_1_TO_1_IP=<encoder-lan-ip> \
   -e INTERFACE_FILTER=<encoder-nic-name> \
-  -e BB_WHEP_MAX_BPS=1000000 \
+  -e BB_WHEP_MAX_BPS=1500000 \
   ghcr.io/<your-org-or-user>/livefabric-bb:latest
 ```
 
+Set the rate at or slightly above the encoder's average bitrate. If set well
+below the sustained bitrate the queue will keep overflowing (repeated PLI /
+brief freezes); that is backpressure telling you the encoder rate is too high.
+
 ### Client/player-side hardening
 
-Server-side limiting helps, but unstable clients still need guardrails:
+Server-side pacing helps, but unstable clients still need guardrails:
 
 - keep one active playback session per device/tab
 - avoid auto-reconnect loops with sub-second retry; use exponential backoff
