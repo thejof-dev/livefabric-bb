@@ -167,6 +167,36 @@ Notes:
 - The Docker image includes the same mitigation we applied live:
   reduced RTCP feedback and throttled PLI forwarding.
 
+### Burst control on BB server
+
+To reduce traffic spikes caused by unstable WHEP clients, this image includes a
+server-side egress limiter in the WHEP packet path.
+
+- Env var: `BB_WHEP_MAX_BPS`
+- Meaning: hard cap (bits/sec) for per-session WHEP video egress
+- Default in image: `1500000` (1.5 Mbps)
+
+Example override:
+
+```bash
+docker run -d --name livefabric-bb --restart unless-stopped \
+  --network host \
+  -e NAT_1_TO_1_IP=<encoder-lan-ip> \
+  -e INTERFACE_FILTER=<encoder-nic-name> \
+  -e BB_WHEP_MAX_BPS=1000000 \
+  ghcr.io/<your-org-or-user>/livefabric-bb:latest
+```
+
+### Client/player-side hardening
+
+Server-side limiting helps, but unstable clients still need guardrails:
+
+- keep one active playback session per device/tab
+- avoid auto-reconnect loops with sub-second retry; use exponential backoff
+- on packet-loss events, debounce quality/layer switches to at most once every 2-3s
+- prefer fixed lower layer/profile for poor links instead of rapid adaptive toggling
+- if browser autoplay fails, do not hammer play calls in a tight loop
+
 ## Troubleshooting
 
 - **404 on `/`** — `DISABLE_FRONTEND` is set to *anything* (incl. `FALSE`); the

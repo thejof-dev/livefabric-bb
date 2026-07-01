@@ -25,14 +25,10 @@ RUN git clone --depth 1 --branch "${BROADCAST_BOX_REF}" https://github.com/glime
 
 WORKDIR /build/src
 
-# Mitigation for bad-link viewer feedback loops:
-# 1) reduce advertised RTCP feedback (drop nack/fir/pli)
-# 2) rate-limit PLI forwarding to publisher side
-RUN perl -0777 -i -pe 's/var videoRTCPFeedback = \[\]webrtc\.RTCPFeedback\{\n\s*\{Type: "goog-remb", Parameter: ""\},\n\s*\{Type: "ccm", Parameter: "fir"\},\n\s*\{Type: "nack", Parameter: ""\},\n\s*\{Type: "nack", Parameter: "pli"\},\n\}/var videoRTCPFeedback = []webrtc.RTCPFeedback{\n\t\t{Type: "goog-remb", Parameter: ""},\n\t}/s' internal/webrtc/codecs/codecs.go
-
-RUN perl -0777 -i -pe 's/(SessionClose sync\.Once\n\s*onClose\s+func\(string\)\n\s*pliSender\s+func\(\)\n)/$1\n\t\t\t\tPLILock     sync.Mutex\n\t\t\t\tlastPLISent time.Time\n/s' internal/webrtc/sessions/whep/types.go
-
-RUN perl -0777 -i -pe 's/func \(w \*WHEPSession\) SendPLI\(\) \{\n\s*if w\.IsSessionClosed\.Load\(\) \{\n\s*return\n\s*\}\n\n\s*w\.pliSender\(\)\n\}/func (w *WHEPSession) SendPLI() {\n\tif w.IsSessionClosed.Load() {\n\t\treturn\n\t}\n\n\tconst minPLIInterval = 750 * time.Millisecond\n\tnow := time.Now()\n\n\tw.PLILock.Lock()\n\tif !w.lastPLISent.IsZero() && now.Sub(w.lastPLISent) < minPLIInterval {\n\t\tw.PLILock.Unlock()\n\t\treturn\n\t}\n\tw.lastPLISent = now\n\tw.PLILock.Unlock()\n\n\tw.pliSender()\n\}/s' internal/webrtc/sessions/whep/whep.go
+COPY docker/overrides/internal/webrtc/codecs/codecs.go /build/src/internal/webrtc/codecs/codecs.go
+COPY docker/overrides/internal/webrtc/sessions/whep/types.go /build/src/internal/webrtc/sessions/whep/types.go
+COPY docker/overrides/internal/webrtc/sessions/whep/whep.go /build/src/internal/webrtc/sessions/whep/whep.go
+COPY docker/overrides/internal/webrtc/sessions/whep/packet_writer.go /build/src/internal/webrtc/sessions/whep/packet_writer.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
@@ -59,6 +55,7 @@ ENV STUN_SERVERS=stun.l.google.com:19302
 ENV STREAM_PROFILE_PATH=/opt/livefabric-bb/profiles
 ENV LOGGING_ENABLED=TRUE
 ENV LOGGING_DIRECTORY=/opt/livefabric-bb/logs
+ENV BB_WHEP_MAX_BPS=1500000
 
 EXPOSE 8080/tcp
 EXPOSE 8080/udp
