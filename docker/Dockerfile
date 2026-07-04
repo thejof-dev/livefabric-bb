@@ -67,7 +67,7 @@ RUN perl -0pi -e 's{webrtc\.ICEConnectionStateFailed,\n(\s*)webrtc\.ICEConnectio
 # build loudly if the upstream anchors ever move.
 RUN perl -0pi -e 's{\t"log/slog"\n}{\t"errors"\n\t"io"\n\t"log/slog"\n}; s{(t\.writeStream\.WriteRTP\(&packet\.Header, packet\.Payload\); err != nil \{\n)(\s*t\.errorCount \+= 1)}{$1\t\tif errors.Is(err, io.ErrClosedPipe) {\n\t\t\treturn err\n\t\t}\n$2}' internal/webrtc/codecs/track_multi_codec.go \
  && grep -q 'errors.Is(err, io.ErrClosedPipe)' internal/webrtc/codecs/track_multi_codec.go \
- && grep -q '^\t"io"$' internal/webrtc/codecs/track_multi_codec.go
+ && grep -q '^	"io"$' internal/webrtc/codecs/track_multi_codec.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
