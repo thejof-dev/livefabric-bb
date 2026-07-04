@@ -24,15 +24,16 @@ const (
 
 var videoRTCPFeedback = []webrtc.RTCPFeedback{
 	{Type: "goog-remb", Parameter: ""},
-	// FIR + PLI let a viewer recover from loss by requesting a fresh keyframe
-	// (bounded, one keyframe per request). The generic {Type: "nack"} per-packet
-	// retransmission feedback is DELIBERATELY omitted: on a lossy viewer link it
-	// drives an unbounded NACK retransmission storm (the server resends its whole
-	// recent packet buffer every RTCP interval) because broadcast-box wires no
-	// congestion control to throttle it, saturating egress and freezing video.
-	// The NACK responder is also removed from the interceptor registry
-	// (see internal/webrtc/interceptors/interceptors.go) as a belt-and-braces.
+	// FIR + PLI let a viewer recover from a large loss by requesting a fresh
+	// keyframe. Generic {Type: "nack"} adds per-packet retransmission, which is
+	// required here because these nodes always run on uncontrolled WAN behind
+	// SpeedFusion: the final box->viewer WebRTC hop is lossy, and without NACK a
+	// single lost packet freezes video until the next keyframe (~2s). The storm
+	// risk (server resending its whole buffer every RTCP interval, unthrottled)
+	// is mitigated at the interceptor level by bounding the NACK responder's ring
+	// buffer via ResponderSize — see internal/webrtc/interceptors/interceptors.go.
 	{Type: "ccm", Parameter: "fir"},
+	{Type: "nack", Parameter: ""},
 	{Type: "nack", Parameter: "pli"},
 }
 
