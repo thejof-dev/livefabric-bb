@@ -171,6 +171,43 @@ Notes:
 - The Docker image includes the same mitigation we applied live:
   reduced RTCP feedback and throttled PLI forwarding.
 
+### On-box SSH diagnostics (opt-in)
+
+The Videon-style appliance exposes no host SSH, which makes tracing interface
+traffic hard. The image can start a tiny key-only SSH server (dropbear) for
+diagnostics. Because the container runs `--network host`, it binds directly on
+the host and is reachable at `<host-ip>:<port>`, and the shell lands in the
+**host network namespace** so `tcpdump` / `iftop` / `ss` see the real interface
+traffic. `tcpdump`, `iftop`, `ss` and `ip` are bundled.
+
+Enable it by setting `SSH_ENABLED` on the container:
+
+```bash
+docker run -d --name livefabric-bb --restart unless-stopped \
+  --network host \
+  -e SSH_ENABLED=1 \
+  -e SSH_PORT=22 \
+  -v /opt/livefabric-bb/profiles:/opt/livefabric-bb/profiles \
+  ghcr.io/<your-org-or-user>/livefabric-bb:latest
+```
+
+- **Off by default.** Only starts when `SSH_ENABLED` is set (and not `0`/`false`).
+- **Key-only, root login.** LiveFabric project keys are pre-authorized; add more
+  at runtime with `-e SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAA... you@host"`.
+- **`SSH_PORT`** defaults to `22`; change it if the host already runs sshd on 22
+  (dropbear logs a warning and BB keeps running if the port is taken).
+- The host key is persisted under the profiles volume, so it stays stable across
+  restarts (no host-key-changed warnings).
+
+Then, to trace the interface and confirm the traffic source:
+
+```bash
+ssh -p 22 root@<host-ip>
+iftop -nNP                 # live per-connection talkers
+tcpdump -ni any port 8080  # confirm WHIP ingest vs WHEP egress
+ss -tunp                   # sockets + owning process (BB)
+```
+
 ### Live settings page
 
 The image serves a dependency-free admin page at `http://{device_ip}:8080/settings`

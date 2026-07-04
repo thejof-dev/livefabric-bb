@@ -1,0 +1,5 @@
+# LiveFabric BB — default authorized SSH keys (opt-in diagnostics access).
+# These are LiveFabric project keys. Additional keys can be appended at runtime
+# via the SSH_AUTHORIZED_KEYS env var without rebuilding the image.
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHs9HnmtemSwjSmgOkADDxhOnhe69LrslQqQFP5xgEW james@livefabric
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ9LH7rO49Kz4BIQmW7Su9O8wm1U1HIDMcKwBG4p7jBd copilot@5g-node

@@ -37,4 +37,37 @@ if [ -z "${NAT_1_TO_1_IP:-}" ]; then
 fi
 
 echo "livefabric-bb: NAT_1_TO_1_IP=${NAT_1_TO_1_IP:-<default candidate gathering>}"
+
+# Optional on-box SSH for diagnostics (opt-in via SSH_ENABLED). Key-only, root
+# login. With --network host this is reachable directly at <host-ip>:<SSH_PORT>,
+# and lands you in the host network namespace so tcpdump/iftop/ss see the real
+# interface traffic. Host key is persisted under the profiles volume so it stays
+# stable across restarts. Extra keys can be added via SSH_AUTHORIZED_KEYS.
+case "${SSH_ENABLED:-}" in
+  ""|0|false|FALSE|no|NO) ;;
+  *)
+    SSH_PORT="${SSH_PORT:-22}"
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    : > /root/.ssh/authorized_keys
+    [ -f /opt/livefabric-bb/authorized_keys ] && grep -E '^(ssh-|ecdsa-)' /opt/livefabric-bb/authorized_keys >> /root/.ssh/authorized_keys
+    if [ -n "${SSH_AUTHORIZED_KEYS:-}" ]; then
+      printf '%s\n' "$SSH_AUTHORIZED_KEYS" >> /root/.ssh/authorized_keys
+    fi
+    chmod 600 /root/.ssh/authorized_keys
+
+    HOSTKEY_DIR="${STREAM_PROFILE_PATH:-/opt/livefabric-bb/profiles}/dropbear"
+    mkdir -p "$HOSTKEY_DIR"
+    HOSTKEY="$HOSTKEY_DIR/dropbear_ed25519_host_key"
+    [ -f "$HOSTKEY" ] || dropbearkey -t ed25519 -f "$HOSTKEY" >/dev/null 2>&1
+
+    if [ -s /root/.ssh/authorized_keys ]; then
+      echo "livefabric-bb: starting dropbear ssh on port ${SSH_PORT} (key-only, root)"
+      dropbear -p "${SSH_PORT}" -r "$HOSTKEY" -s -g \
+        || echo "livefabric-bb: WARN dropbear failed to start (is port ${SSH_PORT} already in use on the host?)"
+    else
+      echo "livefabric-bb: WARN SSH_ENABLED set but no authorized keys available; not starting sshd"
+    fi
+    ;;
+esac
+
 exec /opt/livefabric-bb/broadcast-box

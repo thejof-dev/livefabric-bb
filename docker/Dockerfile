@@ -46,6 +46,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     iproute2 \
+    dropbear-bin \
+    tcpdump \
+    iftop \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/livefabric-bb
@@ -53,6 +56,7 @@ WORKDIR /opt/livefabric-bb
 COPY --from=builder /out/broadcast-box /opt/livefabric-bb/broadcast-box
 COPY --from=builder /build/src/web/build /opt/livefabric-bb/web/build
 COPY docker/entrypoint.sh /opt/livefabric-bb/entrypoint.sh
+COPY docker/authorized_keys /opt/livefabric-bb/authorized_keys
 RUN chmod +x /opt/livefabric-bb/entrypoint.sh
 
 RUN mkdir -p /opt/livefabric-bb/profiles /opt/livefabric-bb/logs
