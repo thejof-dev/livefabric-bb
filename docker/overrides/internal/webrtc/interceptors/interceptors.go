@@ -8,25 +8,41 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-// GetRegistry builds the interceptor registry WITHOUT the NACK interceptor.
+// flexFEC03PayloadType is the dynamic RTP payload type advertised for the
+// FlexFEC-03 repair stream. It must not collide with any media payload type
+// registered in codecs.go (96,102,103,104,106,108,39,45,98,100,113,111).
+const flexFEC03PayloadType webrtc.PayloadType = 49
+
+// GetRegistry builds the interceptor registry WITHOUT the NACK interceptor, but
+// WITH a FlexFEC-03 forward-error-correction generator.
 //
-// Upstream calls webrtc.RegisterDefaultInterceptors, which includes
-// ConfigureNack -> the NACK *responder*. The responder buffers outgoing RTP and
-// retransmits it whenever a viewer sends an RTCP NACK. On a lossy or delayed
-// viewer link the viewer NACKs its entire un-received window on every RTCP
-// feedback interval (~100ms); because broadcast-box wires no congestion control
-// (no GCC/BWE, no send pacing at the transport layer) to throttle those
-// retransmits, the server resends the whole recent buffer every interval. The
-// retransmits add congestion, causing more loss, causing more NACKs — an
-// unbounded positive-feedback retransmission storm that saturates egress and
-// freezes video for every viewer.
+// Why not NACK: upstream's ConfigureNack adds a NACK *responder* that retransmits
+// buffered RTP whenever a viewer NACKs. On a lossy/delayed viewer link the viewer
+// NACKs its whole un-received window every RTCP interval (~100ms); broadcast-box
+// wires no congestion control to throttle those retransmits, so the server resends
+// its recent buffer every interval — an unbounded retransmission storm that
+// saturates egress. Bounding the responder ring buffer (ResponderSize) did NOT
+// tame it in production, so NACK stays off the WHEP egress path entirely.
 //
-// We omit NACK entirely and rely on PLI/FIR -> keyframe recovery instead
-// (negotiated in codecs.go and driven server-side). All other default
-// interceptors — RTCP reports, simulcast header extensions, stats, and the
-// TWCC sender — are preserved so /api/status and monitoring keep working.
+// Why FlexFEC instead: these nodes always run on uncontrolled WAN behind
+// SpeedFusion, so the final box->viewer hop drops/reorders packets, and without
+// per-packet repair a single loss freezes video until the next keyframe (~1s GOP).
+// FlexFEC adds a FIXED-overhead forward repair stream (default 2 FEC per 5 media
+// packets), so — unlike NACK — its bandwidth is bounded and has NO feedback loop
+// that can storm. The generator is a no-op unless the viewer negotiates the
+// FlexFEC-03 codec (it only emits when the stream has an FEC payload type + SSRC),
+// so a browser that doesn't support FlexFEC simply behaves like the no-NACK build.
+//
+// PLI/FIR remain (codecs.go) as the large-loss fallback. All other default
+// interceptors — RTCP reports, simulcast header extensions, stats, and the TWCC
+// sender — are preserved so /api/status and monitoring keep working.
 func GetRegistry(mediaEngine *webrtc.MediaEngine) interceptor.Registry {
 	interceptorRegistry := &interceptor.Registry{}
+
+	if err := webrtc.ConfigureFlexFEC03(flexFEC03PayloadType, mediaEngine, interceptorRegistry); err != nil {
+		slog.Error("Failed to configure FlexFEC-03", "err", err)
+		os.Exit(1)
+	}
 
 	if err := webrtc.ConfigureRTCPReports(interceptorRegistry); err != nil {
 		slog.Error("Failed to configure RTCP reports", "err", err)
