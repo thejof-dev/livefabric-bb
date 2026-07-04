@@ -23,6 +23,8 @@ type Settings struct {
 	PacerBps      uint64 `json:"pacerBps"`
 	PLIThrottleMs uint64 `json:"pliThrottleMs"`
 	NATOverrideIP string `json:"natOverrideIp"`
+	SSHEnabled    bool   `json:"sshEnabled"`
+	SSHPort       uint64 `json:"sshPort"`
 }
 
 const (
@@ -31,6 +33,7 @@ const (
 	maxPLIThrottleMs     = 5000
 	minPacerBps          = 100_000
 	maxPacerBps          = 100_000_000
+	defaultSSHPort       = 22
 )
 
 var (
@@ -62,7 +65,10 @@ func Init() {
 		s := seedFromEnv()
 
 		if b, err := os.ReadFile(file); err == nil {
-			var fromFile Settings
+			// Unmarshal onto the seeded defaults so keys absent from an older
+			// settings file (e.g. sshEnabled) keep their default instead of
+			// silently becoming the zero value.
+			fromFile := s
 			if json.Unmarshal(b, &fromFile) == nil {
 				s = sanitize(fromFile)
 			}
@@ -74,7 +80,17 @@ func Init() {
 }
 
 func seedFromEnv() Settings {
-	s := Settings{PLIThrottleMs: defaultPLIThrottleMs}
+	// SSH defaults ON; disable only via an explicit falsey SSH_ENABLED.
+	s := Settings{PLIThrottleMs: defaultPLIThrottleMs, SSHEnabled: true, SSHPort: defaultSSHPort}
+
+	if v := os.Getenv("SSH_ENABLED"); v != "" {
+		s.SSHEnabled = !isFalsey(v)
+	}
+	if v := os.Getenv("SSH_PORT"); v != "" {
+		if p, err := strconv.ParseUint(v, 10, 32); err == nil && p > 0 {
+			s.SSHPort = p
+		}
+	}
 
 	if v := os.Getenv("BB_WHEP_MAX_BPS"); v != "" {
 		if bps, err := strconv.ParseUint(v, 10, 64); err == nil && bps > 0 {
@@ -117,7 +133,21 @@ func sanitize(s Settings) Settings {
 	}
 
 	s.NATOverrideIP = strings.TrimSpace(s.NATOverrideIP)
+
+	if s.SSHPort == 0 || s.SSHPort > 65535 {
+		s.SSHPort = defaultSSHPort
+	}
+
 	return s
+}
+
+// isFalsey reports whether an env string means "off".
+func isFalsey(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false", "no", "off":
+		return true
+	}
+	return false
 }
 
 func apply(s Settings) {

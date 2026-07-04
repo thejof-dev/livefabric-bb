@@ -32,11 +32,14 @@ COPY docker/overrides/internal/webrtc/sessions/whep/packet_writer.go /build/src/
 COPY docker/overrides/internal/webrtc/sessions/whep/pacer.go /build/src/internal/webrtc/sessions/whep/pacer.go
 COPY docker/overrides/internal/settings/settings.go /build/src/internal/settings/settings.go
 COPY docker/overrides/internal/server/handlers/settings_handler.go /build/src/internal/server/handlers/settings_handler.go
+COPY docker/overrides/internal/server/handlers/monitor_handler.go /build/src/internal/server/handlers/monitor_handler.go
 
-# Register the /settings and /api/settings routes by patching the router. The
-# grep guard fails the build loudly if the upstream anchor ever moves.
-RUN perl -0pi -e 's{(serverMux\.HandleFunc\("/api/status",[^\n]*\n)}{$1\tserverMux.HandleFunc("/settings", corsHandler(settingsPageHandler))\n\tserverMux.HandleFunc("/api/settings", corsHandler(settingsAPIHandler))\n}' internal/server/handlers/routes.go \
- && grep -q '/api/settings' internal/server/handlers/routes.go
+# Register the /settings, /api/settings, /monitor and /api/netstat routes by
+# patching the router. The grep guard fails the build loudly if the upstream
+# anchor ever moves.
+RUN perl -0pi -e 's{(serverMux\.HandleFunc\("/api/status",[^\n]*\n)}{$1\tserverMux.HandleFunc("/settings", corsHandler(settingsPageHandler))\n\tserverMux.HandleFunc("/api/settings", corsHandler(settingsAPIHandler))\n\tserverMux.HandleFunc("/monitor", corsHandler(monitorPageHandler))\n\tserverMux.HandleFunc("/api/netstat", corsHandler(monitorAPIHandler))\n}' internal/server/handlers/routes.go \
+ && grep -q '/api/settings' internal/server/handlers/routes.go \
+ && grep -q '/api/netstat' internal/server/handlers/routes.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .

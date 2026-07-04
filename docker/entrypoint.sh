@@ -38,15 +38,35 @@ fi
 
 echo "livefabric-bb: NAT_1_TO_1_IP=${NAT_1_TO_1_IP:-<default candidate gathering>}"
 
-# Optional on-box SSH for diagnostics (opt-in via SSH_ENABLED). Key-only, root
-# login. With --network host this is reachable directly at <host-ip>:<SSH_PORT>,
-# and lands you in the host network namespace so tcpdump/iftop/ss see the real
-# interface traffic. Host key is persisted under the profiles volume so it stays
-# stable across restarts. Extra keys can be added via SSH_AUTHORIZED_KEYS.
-case "${SSH_ENABLED:-}" in
-  ""|0|false|FALSE|no|NO) ;;
+# On-box SSH for diagnostics — ENABLED BY DEFAULT. Key-only, root login. With
+# --network host this is reachable directly at <host-ip>:<SSH_PORT>, and lands
+# you in the host network namespace so tcpdump/iftop/ss see the real interface
+# traffic. Host key is persisted under the profiles volume so it stays stable
+# across restarts. Extra keys can be added via SSH_AUTHORIZED_KEYS.
+#
+# Enable/port resolve from: env (SSH_ENABLED / SSH_PORT), else the persisted
+# settings file (sshEnabled / sshPort, editable on the /settings page), else the
+# defaults (enabled, port 22). Disable with SSH_ENABLED=0 or sshEnabled:false.
+SSH_ENABLED_EFF="${SSH_ENABLED:-}"
+SSH_PORT_EFF="${SSH_PORT:-}"
+if [ -f "$SETTINGS_FILE" ]; then
+  if [ -z "$SSH_ENABLED_EFF" ]; then
+    FILE_SSH=$(sed -n 's/.*"sshEnabled"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "$SETTINGS_FILE" | head -n1)
+    [ -n "$FILE_SSH" ] && SSH_ENABLED_EFF="$FILE_SSH"
+  fi
+  if [ -z "$SSH_PORT_EFF" ]; then
+    FILE_PORT=$(sed -n 's/.*"sshPort"[[:space:]]*:[[:space:]]*\([0-9]\{1,5\}\).*/\1/p' "$SETTINGS_FILE" | head -n1)
+    [ -n "$FILE_PORT" ] && [ "$FILE_PORT" != "0" ] && SSH_PORT_EFF="$FILE_PORT"
+  fi
+fi
+SSH_ENABLED_EFF="${SSH_ENABLED_EFF:-1}"
+
+case "$SSH_ENABLED_EFF" in
+  0|false|FALSE|no|NO|off|OFF)
+    echo "livefabric-bb: SSH disabled (SSH_ENABLED_EFF=$SSH_ENABLED_EFF)"
+    ;;
   *)
-    SSH_PORT="${SSH_PORT:-22}"
+    SSH_PORT="${SSH_PORT_EFF:-22}"
     mkdir -p /root/.ssh && chmod 700 /root/.ssh
     : > /root/.ssh/authorized_keys
     [ -f /opt/livefabric-bb/authorized_keys ] && grep -E '^(ssh-|ecdsa-)' /opt/livefabric-bb/authorized_keys >> /root/.ssh/authorized_keys

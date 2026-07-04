@@ -104,6 +104,17 @@ const settingsPageHTML = `<!doctype html>
       <p class="hint">Leave blank to auto-detect the LAN IP (recommended). Changing this applies after a container restart.</p>
     </fieldset>
 
+    <fieldset>
+      <legend>SSH diagnostics</legend>
+      <div class="row">
+        <input type="checkbox" id="sshEnabled">
+        <label for="sshEnabled" style="margin:0">Enable on-box SSH (key-only, root)</label>
+      </div>
+      <label for="sshPort">SSH port</label>
+      <input type="number" id="sshPort" min="1" max="65535" step="1" value="22">
+      <p class="hint">Enabled by default. Under host networking this binds directly on the appliance IP and lands in the host net namespace (tcpdump/iftop/ss see real traffic). Use a non-22 port (e.g. 2222) if the host already runs sshd. Changes apply after a container restart.</p>
+    </fieldset>
+
     <button type="submit" id="save">Save</button>
     <div id="status"></div>
   </form>
@@ -119,6 +130,8 @@ const settingsPageHTML = `<!doctype html>
       $("pacerMbps").value = s.pacerBps ? (s.pacerBps / 1e6) : 1.5;
       $("pliMs").value = s.pliThrottleMs || 750;
       $("natIp").value = s.natOverrideIp || "";
+      $("sshEnabled").checked = s.sshEnabled !== false;
+      $("sshPort").value = s.sshPort || 22;
     }).catch(function () { status.textContent = "Failed to load settings"; status.className = "err"; });
   }
 
@@ -130,7 +143,9 @@ const settingsPageHTML = `<!doctype html>
       pacerEnabled: $("pacerEnabled").checked,
       pacerBps: Math.round(parseFloat($("pacerMbps").value || "0") * 1e6),
       pliThrottleMs: parseInt($("pliMs").value || "750", 10),
-      natOverrideIp: $("natIp").value.trim()
+      natOverrideIp: $("natIp").value.trim(),
+      sshEnabled: $("sshEnabled").checked,
+      sshPort: parseInt($("sshPort").value || "22", 10)
     };
     fetch("/api/settings", {
       method: "POST",
@@ -145,6 +160,8 @@ const settingsPageHTML = `<!doctype html>
         $("pacerMbps").value = res.j.pacerBps ? (res.j.pacerBps / 1e6) : 0;
         $("pliMs").value = res.j.pliThrottleMs;
         $("natIp").value = res.j.natOverrideIp || "";
+        $("sshEnabled").checked = res.j.sshEnabled !== false;
+        $("sshPort").value = res.j.sshPort || 22;
         status.textContent = "Saved."; status.className = "ok";
       }).catch(function () {
         $("save").disabled = false;
