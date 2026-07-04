@@ -41,6 +41,22 @@ RUN perl -0pi -e 's{(serverMux\.HandleFunc\("/api/status",[^\n]*\n)}{$1\tserverM
  && grep -q '/api/settings' internal/server/handlers/routes.go \
  && grep -q '/api/netstat' internal/server/handlers/routes.go
 
+# WHEP orphan-session mitigation. On a lossy/flapping viewer link the client
+# keeps re-POSTing fresh WHEP offers (each a new PeerConnection forwarding the
+# full stream) while the stale sessions linger. Upstream only tears a WHEP
+# session down on ICE Failed/Closed, and uses Pion's default ICE timeouts
+# (Disconnected @5s, Failed @25s), so up to ~25s of orphaned ~2Mbps sessions
+# can stack into tens of Mbps of egress to one bad viewer. Two surgical fixes:
+#   1. Also close the WHEP session on ICEConnectionStateDisconnected (fires at
+#      ~5s instead of 25s). WHEP is view-only; the client just reconnects.
+#   2. Tighten ICE timeouts to (disconnected=5s, failed=10s, keepAlive=2s).
+# grep guards fail the build loudly if the upstream anchors ever move.
+RUN perl -0pi -e 's{webrtc\.ICEConnectionStateFailed,\n(\s*)webrtc\.ICEConnectionStateClosed:}{webrtc.ICEConnectionStateDisconnected,\n\t\t\twebrtc.ICEConnectionStateFailed,\n$1webrtc.ICEConnectionStateClosed:}' internal/webrtc/sessions/whep/handlers.go \
+ && grep -q 'ICEConnectionStateDisconnected' internal/webrtc/sessions/whep/handlers.go \
+ && perl -0pi -e 's{\t"net"\n}{\t"net"\n\t"time"\n}; s{(settingEngine\.SetIncludeLoopbackCandidate\([^\n]*\)\n)}{$1\n\t// LiveFabric: bound orphaned WHEP session lifetime on lossy links.\n\tsettingEngine.SetICETimeouts(5*time.Second, 10*time.Second, 2*time.Second)\n}' internal/webrtc/settings.go \
+ && grep -q 'SetICETimeouts' internal/webrtc/settings.go \
+ && grep -q '"time"' internal/webrtc/settings.go
+
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
 
