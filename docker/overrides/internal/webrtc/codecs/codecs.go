@@ -24,6 +24,16 @@ const (
 
 var videoRTCPFeedback = []webrtc.RTCPFeedback{
 	{Type: "goog-remb", Parameter: ""},
+	// FIR + PLI let a viewer recover from loss by requesting a fresh keyframe
+	// (bounded, one keyframe per request). The generic {Type: "nack"} per-packet
+	// retransmission feedback is DELIBERATELY omitted: on a lossy viewer link it
+	// drives an unbounded NACK retransmission storm (the server resends its whole
+	// recent packet buffer every RTCP interval) because broadcast-box wires no
+	// congestion control to throttle it, saturating egress and freezing video.
+	// The NACK responder is also removed from the interceptor registry
+	// (see internal/webrtc/interceptors/interceptors.go) as a belt-and-braces.
+	{Type: "ccm", Parameter: "fir"},
+	{Type: "nack", Parameter: "pli"},
 }
 
 var videoCodecs = []webrtc.RTPCodecParameters{

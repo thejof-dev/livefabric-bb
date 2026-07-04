@@ -26,6 +26,7 @@ RUN git clone --depth 1 --branch "${BROADCAST_BOX_REF}" https://github.com/glime
 WORKDIR /build/src
 
 COPY docker/overrides/internal/webrtc/codecs/codecs.go /build/src/internal/webrtc/codecs/codecs.go
+COPY docker/overrides/internal/webrtc/interceptors/interceptors.go /build/src/internal/webrtc/interceptors/interceptors.go
 COPY docker/overrides/internal/webrtc/sessions/whep/types.go /build/src/internal/webrtc/sessions/whep/types.go
 COPY docker/overrides/internal/webrtc/sessions/whep/whep.go /build/src/internal/webrtc/sessions/whep/whep.go
 COPY docker/overrides/internal/webrtc/sessions/whep/packet_writer.go /build/src/internal/webrtc/sessions/whep/packet_writer.go
@@ -56,6 +57,17 @@ RUN perl -0pi -e 's{webrtc\.ICEConnectionStateFailed,\n(\s*)webrtc\.ICEConnectio
  && perl -0pi -e 's{\t"net"\n}{\t"net"\n\t"time"\n}; s{(settingEngine\.SetIncludeLoopbackCandidate\([^\n]*\)\n)}{$1\n\t// LiveFabric: bound orphaned WHEP session lifetime on lossy links.\n\tsettingEngine.SetICETimeouts(5*time.Second, 10*time.Second, 2*time.Second)\n}' internal/webrtc/settings.go \
  && grep -q 'SetICETimeouts' internal/webrtc/settings.go \
  && grep -q '"time"' internal/webrtc/settings.go
+
+# WHEP dead-session teardown. TrackMultiCodec.WriteRTP swallows write errors
+# (only logging every 50th and never propagating io.ErrClosedPipe), so when a
+# viewer's underlying transport is gone the WHEP packet writer never sees the
+# closed-pipe error and the session is not torn down — it keeps fanning the full
+# stream out to a dead peer until ICE eventually fails. Propagate io.ErrClosedPipe
+# immediately so the writer closes the session at once. grep guards fail the
+# build loudly if the upstream anchors ever move.
+RUN perl -0pi -e 's{\t"log/slog"\n}{\t"errors"\n\t"io"\n\t"log/slog"\n}; s{(t\.writeStream\.WriteRTP\(&packet\.Header, packet\.Payload\); err != nil \{\n)(\s*t\.errorCount \+= 1)}{$1\t\tif errors.Is(err, io.ErrClosedPipe) {\n\t\t\treturn err\n\t\t}\n$2}' internal/webrtc/codecs/track_multi_codec.go \
+ && grep -q 'errors.Is(err, io.ErrClosedPipe)' internal/webrtc/codecs/track_multi_codec.go \
+ && grep -q '^\t"io"$' internal/webrtc/codecs/track_multi_codec.go
 
 RUN cd web && npm ci --no-audit --no-fund && npm run build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/broadcast-box .
